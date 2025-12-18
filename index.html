@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Explorateur friches Grand Est</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body, html { height: 100%; margin: 0; font-family: 'Inter', sans-serif; overflow: hidden; background: #f3f4f6; }
+        #map { height: 100vh; width: 100%; z-index: 1; }
+        
+        .floating-panel {
+            position: absolute; top: 15px; left: 15px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(8px);
+            padding: 16px; border-radius: 12px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            width: 320px; max-height: 95vh; overflow-y: auto;
+            border: 1px solid rgba(0,0,0,0.05);
+        }
+
+        #detail-sidebar {
+            position: absolute; top: 0; right: 0; height: 100%; width: 420px;
+            background: white; z-index: 1001;
+            box-shadow: -5px 0 25px rgba(0,0,0,0.1);
+            transform: translateX(100%); transition: transform 0.3s ease;
+            display: flex; flex-direction: column;
+        }
+        #detail-sidebar.active { transform: translateX(0); }
+
+        .filter-group {
+            max-height: 80px; overflow-y: auto;
+            border: 1px solid #e5e7eb; padding: 6px;
+            border-radius: 6px; background: #ffffff;
+            font-size: 0.75rem;
+        }
+
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 10px; }
+
+        #ia-modal {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+            z-index: 2000; display: none; align-items: center; justify-content: center;
+            padding: 20px;
+        }
+
+        .leaflet-container { height: 100%; width: 100%; }
+    </style>
+</head>
+<body>
+
+    <div id="loader" class="fixed inset-0 bg-white z-[3000] flex flex-col items-center justify-center">
+        <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600"></div>
+        <p class="mt-4 text-sm font-medium text-gray-500">Chargement de la base...</p>
+    </div>
+
+    <div class="floating-panel">
+        <div class="flex items-center justify-between mb-4">
+            <h1 class="text-lg font-extrabold text-gray-900 tracking-tight">Explorateur friches Grand Est</h1>
+            <span id="stats" class="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold">0 sites</span>
+        </div>
+        
+        <div class="space-y-3">
+            <div>
+                <input type="text" id="search-input" placeholder="Rechercher un site..." 
+                    class="w-full p-2 border border-gray-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm">
+            </div>
+
+            <div class="grid grid-cols-1 gap-3">
+                <div>
+                    <label class="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Types de Friche</label>
+                    <div id="multi-type" class="filter-group space-y-0.5"></div>
+                </div>
+
+                <div>
+                    <label class="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Statuts</label>
+                    <div id="multi-statut" class="filter-group space-y-0.5"></div>
+                </div>
+
+                <div>
+                    <label class="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Zonage PLU</label>
+                    <div id="multi-plu" class="filter-group space-y-0.5"></div>
+                </div>
+
+                <div>
+                    <label class="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Intérêt ISDI</label>
+                    <div id="multi-isdi" class="filter-group space-y-0.5">
+                        <label class="flex items-center space-x-2"><input type="checkbox" value="0" checked> <span>Non Traité</span></label>
+                        <label class="flex items-center space-x-2"><input type="checkbox" value="1" checked> <span>Sans intérêt</span></label>
+                        <label class="flex items-center space-x-2"><input type="checkbox" value="2" checked> <span>Modéré</span></label>
+                        <label class="flex items-center space-x-2"><input type="checkbox" value="3" checked> <span>Fort</span></label>
+                    </div>
+                </div>
+            </div>
+
+            <button onclick="resetFilters()" class="w-full py-2 text-[11px] bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-lg border border-gray-200 font-bold transition-all mt-2">
+                Réinitialiser
+            </button>
+        </div>
+    </div>
+
+    <div id="detail-sidebar">
+        <div class="p-6 overflow-y-auto flex-1">
+            <div class="flex justify-between items-start mb-4">
+                <button onclick="closeSidebar()" class="text-gray-400 hover:text-gray-600 transition-colors">✕</button>
+                <button onclick="generateIAInfo()" class="bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center hover:bg-indigo-100 transition-all">
+                    ✨ Information (IA)
+                </button>
+            </div>
+            <div id="sidebar-content"></div>
+        </div>
+    </div>
+
+    <div id="ia-modal">
+        <div class="bg-white rounded-2xl max-w-2xl w-full p-8 shadow-2xl relative">
+            <button onclick="closeIAModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600">✕</button>
+            <h3 class="text-xl font-bold text-gray-900 mb-4 flex items-center">
+                <span class="mr-2">✨</span> Rapport d'Investigation (IA)
+            </h3>
+            <div id="ia-response" class="prose prose-indigo max-h-[60vh] overflow-y-auto text-gray-600 text-sm leading-relaxed">
+                Recherche en cours...
+            </div>
+            <div class="mt-6 pt-4 border-t text-[10px] text-gray-400 flex justify-between items-center">
+                <span>Sources Web via Google Search (Gemini 2.5 Flash)</span>
+                <button onclick="closeIAModal()" class="bg-gray-900 text-white px-4 py-2 rounded-lg font-bold">Fermer</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+
+    <script>
+        const apiKey = ""; 
+        let map, markerLayer, allData = [];
+        let currentSite = null;
+        const CSV_FILE = 'BD_GEMINI_TEST_CSV.csv';
+
+        const ISDI_COLORS = { '0': '#000000', '1': '#ef4444', '2': '#f97316', '3': '#22c55e' };
+
+        function initMap() {
+            const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap'
+            });
+
+            const googleSat = L.tileLayer('http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                subdomains:['mt0','mt1','mt2','mt3'],
+                attribution: '&copy; Google Maps Satellite'
+            });
+
+            map = L.map('map', { 
+                zoomControl: true,
+                layers: [osm]
+            }).setView([48.6, 7.5], 9);
+
+            const baseMaps = {
+                "Plan (OSM)": osm,
+                "Satellite (Google)": googleSat
+            };
+            L.control.layers(baseMaps).addTo(map);
+
+            markerLayer = L.layerGroup().addTo(map);
+            loadData();
+        }
+
+        async function loadData() {
+            try {
+                const response = await fetch(CSV_FILE);
+                const csvText = await response.text();
+                Papa.parse(csvText, {
+                    header: true, delimiter: ';', skipEmptyLines: true,
+                    complete: function(results) {
+                        allData = results.data.filter(d => d.geompoint && d.geompoint.includes('POINT'));
+                        if (allData.length > 0) {
+                            setupMultiFilters();
+                            updateView();
+                            const c = parseWKT(allData[0].geompoint);
+                            if (c) map.setView(c, 10);
+                        }
+                        document.getElementById('loader').style.display = 'none';
+                        setTimeout(() => map.invalidateSize(), 500);
+                    }
+                });
+            } catch (error) {
+                document.getElementById('loader').innerHTML = "Erreur CSV ou fichier introuvable";
+            }
+        }
+
+        function setupMultiFilters() {
+            const createCheckboxes = (containerId, field) => {
+                const container = document.getElementById(containerId);
+                const values = [...new Set(allData.map(d => d[field]))].filter(v => v).sort();
+                container.innerHTML = values.map(v => `
+                    <label class="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded">
+                        <input type="checkbox" value="${v}" checked class="rounded w-3 h-3 text-indigo-600">
+                        <span class="truncate">${v}</span>
+                    </label>
+                `).join('');
+                container.querySelectorAll('input').forEach(i => i.addEventListener('change', updateView));
+            };
+            createCheckboxes('multi-type', 'site_type');
+            createCheckboxes('multi-statut', 'site_statut');
+            createCheckboxes('multi-plu', 'urba_zone_type');
+            document.getElementById('search-input').addEventListener('input', updateView);
+            document.querySelectorAll('#multi-isdi input').forEach(i => i.addEventListener('change', updateView));
+        }
+
+        function formatSurface(val) {
+            if (!val || val === "") return "N/A";
+            let cleaned = String(val).replace(',', '.').replace(/[^\d.]/g, '');
+            let num = parseFloat(cleaned);
+            return isNaN(num) ? "N/A" : Math.round(num).toLocaleString('fr-FR') + " m²";
+        }
+
+        function parseWKT(wkt) {
+            const match = wkt.match(/POINT\s*\(\s*([\d.-]+)\s+([\d.-]+)\s*\)/);
+            return match ? [parseFloat(match[2]), parseFloat(match[1])] : null;
+        }
+
+        function updateView() {
+            markerLayer.clearLayers();
+            const search = document.getElementById('search-input').value.toLowerCase();
+            const selTypes = Array.from(document.querySelectorAll('#multi-type input:checked')).map(i => i.value);
+            const selStatuts = Array.from(document.querySelectorAll('#multi-statut input:checked')).map(i => i.value);
+            const selPLUs = Array.from(document.querySelectorAll('#multi-plu input:checked')).map(i => i.value);
+            const selISDIs = Array.from(document.querySelectorAll('#multi-isdi input:checked')).map(i => i.value);
+
+            const filtered = allData.filter(d => {
+                return (!search || d.site_nom.toLowerCase().includes(search)) &&
+                        (selTypes.includes(d.site_type)) &&
+                        (selStatuts.includes(d.site_statut)) &&
+                        (selPLUs.includes(d.urba_zone_type)) &&
+                        (selISDIs.includes(String(d.Intérêt_ISDI)));
+            });
+
+            filtered.forEach(d => {
+                const coords = parseWKT(d.geompoint);
+                if (coords) {
+                    const color = ISDI_COLORS[String(d.Intérêt_ISDI)] || '#6366f1';
+                    const marker = L.marker(coords, {
+                        icon: L.divIcon({
+                            className: '',
+                            html: `<svg width="32" height="32" viewBox="0 0 24 24" fill="${color}" stroke="white" stroke-width="1.5"><path d="M12 21.7C17.3 17 20 13 20 9a8 8 0 1 0-16 0c0 4 2.7 8 8 12.7z"/><circle cx="12" cy="9" r="2.5" fill="white"/></svg>`,
+                            iconSize: [32, 32], iconAnchor: [16, 32]
+                        })
+                    });
+                    marker.on('click', () => openSidebar(d));
+                    markerLayer.addLayer(marker);
+                }
+            });
+            document.getElementById('stats').innerText = `${filtered.length} sites`;
+        }
+
+        function openSidebar(d) {
+            currentSite = d;
+            const sidebar = document.getElementById('detail-sidebar');
+            const content = document.getElementById('sidebar-content');
+            const isdiLabels = { '0': 'Non Traité', '1': 'Sans intérêt', '2': 'Modéré', '3': 'Fort' };
+            
+            content.innerHTML = `
+                <h2 class="text-xl font-extrabold text-gray-900 mb-1 leading-tight">${d.site_nom || 'Site Anonyme'}</h2>
+                <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-4">ID: ${d.site_id}</p>
+
+                ${d.url_cartofriche ? `
+                <a href="${d.url_cartofriche}" target="_blank" class="w-full mb-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold flex items-center justify-center transition-all shadow-md">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
+                    Cartofriches
+                </a>` : ''}
+
+                <div class="grid grid-cols-1 gap-4">
+                    <div class="bg-gray-50 border border-gray-100 p-4 rounded-xl">
+                        <label class="text-[10px] font-bold text-gray-400 uppercase block mb-1">Surface</label>
+                        <p class="text-lg font-black text-indigo-600">${formatSurface(d.site_surface)}</p>
+                    </div>
+
+                    <div class="space-y-4 text-sm">
+                        <div class="flex justify-between border-b border-gray-50 pb-2">
+                            <span class="text-gray-400">Commune :</span>
+                            <span class="font-semibold text-gray-700">${d.comm_nom || 'N/A'}</span>
+                        </div>
+                        <div class="flex justify-between border-b border-gray-50 pb-2">
+                            <span class="text-gray-400">Propriétaire :</span>
+                            <span class="font-semibold text-gray-700">${d.propio_nom || 'Inconnu'}</span>
+                        </div>
+                        <div class="flex justify-between border-b border-gray-50 pb-2">
+                            <span class="text-gray-400">Type :</span>
+                            <span class="font-semibold text-gray-700">${d.site_type}</span>
+                        </div>
+                        <div class="flex justify-between border-b border-gray-50 pb-2">
+                            <span class="text-gray-400">Statut :</span>
+                            <span class="font-semibold text-gray-700">${d.site_statut}</span>
+                        </div>
+                        <div class="flex justify-between border-b border-gray-50 pb-2">
+                            <span class="text-gray-400">Intérêt ISDI :</span>
+                            <span class="font-bold" style="color: ${ISDI_COLORS[d.Intérêt_ISDI]}">${isdiLabels[d.Intérêt_ISDI]}</span>
+                        </div>
+                    </div>
+
+                    <div class="mt-4">
+                        <label class="text-[10px] font-bold text-gray-400 uppercase block mb-2">Commentaires</label>
+                        <div class="bg-amber-50/50 p-4 rounded-xl text-xs text-gray-600 leading-relaxed border border-amber-100 italic">
+                            ${d.Commentaires || 'Aucun commentaire enregistré.'}
+                        </div>
+                    </div>
+                </div>
+            `;
+            sidebar.classList.add('active');
+        }
+
+        async function generateIAInfo() {
+            if (!currentSite) return;
+            document.getElementById('ia-modal').style.display = 'flex';
+            const respBox = document.getElementById('ia-response');
+            respBox.innerHTML = `
+                <div class="flex flex-col items-center justify-center py-10">
+                    <div class="animate-spin h-8 w-8 border-b-2 border-indigo-600 rounded-full mb-4"></div>
+                    <p class="text-indigo-600 font-medium animate-pulse">Investigation approfondie sur le web en cours...</p>
+                </div>`;
+
+            const userQuery = `Effectues une recherche détaillée sur le web du site "${currentSite.site_nom}" situé à ${currentSite.comm_nom}, dont le propriétaire est "${currentSite.propio_nom || 'Inconnu'}". Utilise également les données de Cartofriches (${currentSite.url_cartofriche || 'URL non disponible'}). Fais tes recherches dans la presse régionale ou tout autre site contenant des mots-clés relatifs au site. Organise ta réponse de manière structurée avec : contexte historique, projets de reconversion identifiés et articles de presse trouvés.`;
+
+            try {
+                // Utilisation de l'URL v1beta correcte
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+                
+                const payload = {
+                    contents: [{ parts: [{ text: userQuery }] }],
+                    tools: [{ "google_search": {} }]
+                };
+
+                const fetchWithRetry = async (retries = 5) => {
+                    for (let i = 0; i < retries; i++) {
+                        const response = await fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        if (response.ok) return await response.json();
+                        // Délai exponentiel : 1s, 2s, 4s, 8s, 16s
+                        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)));
+                    }
+                    throw new Error("Impossible de contacter le moteur de recherche IA");
+                };
+
+                const data = await fetchWithRetry();
+                const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                const sources = data.candidates?.[0]?.groundingMetadata?.groundingAttributions || [];
+
+                if (!text) {
+                    respBox.innerHTML = "<p class='text-center py-10 text-gray-400 italic'>Aucun résultat probant trouvé sur le web pour ce site.</p>";
+                    return;
+                }
+
+                // Formatage Markdown simplifié vers HTML
+                let htmlOutput = `<div class="space-y-4 text-gray-700 leading-relaxed">
+                    ${text.split('\n').map(line => {
+                        if (line.startsWith('### ')) return `<h4 class="text-lg font-bold text-gray-900 mt-6">${line.replace('### ', '')}</h4>`;
+                        if (line.startsWith('## ')) return `<h3 class="text-xl font-bold text-indigo-700 mt-8 mb-4 border-b pb-2">${line.replace('## ', '')}</h3>`;
+                        if (line.startsWith('**')) return `<p class="mb-2 font-semibold text-gray-800">${line.replace(/\*\*/g, '')}</p>`;
+                        return line ? `<p class="mb-2">${line}</p>` : '';
+                    }).join('')}
+                </div>`;
+
+                if (sources.length > 0) {
+                    htmlOutput += `<div class="mt-8 pt-6 border-t border-gray-100">
+                        <h4 class="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-4">Sources d'investigation</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            ${sources.map(s => `
+                                <a href="${s.web?.uri}" target="_blank" class="flex items-center p-2 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-100 transition-all group">
+                                    <div class="bg-white p-1.5 rounded-md shadow-sm mr-3 group-hover:scale-110 transition-transform">
+                                        <svg class="w-3 h-3 text-indigo-600" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+                                    </div>
+                                    <span class="text-[11px] text-gray-600 font-medium truncate">${s.web?.title || 'Consulter la source'}</span>
+                                </a>`).join('')}
+                        </div>
+                    </div>`;
+                }
+
+                respBox.innerHTML = htmlOutput;
+
+            } catch (error) {
+                respBox.innerHTML = `<div class="p-4 bg-red-50 text-red-600 rounded-lg text-sm font-medium">
+                    Une erreur est survenue lors de la connexion au moteur de recherche IA. 
+                    Veuillez réessayer dans quelques instants.
+                </div>`;
+            }
+        }
+
+        function closeSidebar() { document.getElementById('detail-sidebar').classList.remove('active'); }
+        function closeIAModal() { document.getElementById('ia-modal').style.display = 'none'; }
+        function resetFilters() {
+            document.getElementById('search-input').value = '';
+            document.querySelectorAll('.filter-group input').forEach(i => i.checked = true);
+            updateView();
+            closeSidebar();
+        }
+
+        window.onload = initMap;
+    </script>
+</body>
+</html>
