@@ -260,6 +260,9 @@
             const content = document.getElementById('sidebar-content');
             const isdiLabels = { '0': 'Non Traité', '1': 'Sans intérêt', '2': 'Modéré', '3': 'Fort' };
             
+            // On s'assure de récupérer le propriétaire en testant différentes écritures
+            const proprietaire = d.propio_nom || d.PROPIO_NOM || d['propio_nom '] || "Inconnu";
+
             content.innerHTML = `
                 <h2 class="text-xl font-extrabold text-gray-900 mb-1 leading-tight">${d.site_nom || 'Site Anonyme'}</h2>
                 <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-4">ID: ${d.site_id}</p>
@@ -283,7 +286,7 @@
                         </div>
                         <div class="flex justify-between border-b border-gray-50 pb-2">
                             <span class="text-gray-400">Propriétaire :</span>
-                            <span class="font-semibold text-gray-700">${d.propio_nom || 'Inconnu'}</span>
+                            <span class="font-semibold text-gray-700">${proprietaire}</span>
                         </div>
                         <div class="flex justify-between border-b border-gray-50 pb-2">
                             <span class="text-gray-400">Type :</span>
@@ -317,76 +320,78 @@
             respBox.innerHTML = `
                 <div class="flex flex-col items-center justify-center py-10">
                     <div class="animate-spin h-8 w-8 border-b-2 border-indigo-600 rounded-full mb-4"></div>
-                    <p class="text-indigo-600 font-medium animate-pulse">Investigation approfondie sur le web en cours...</p>
+                    <p class="text-indigo-600 font-medium animate-pulse">Consultation des sources régionales et investigation Web...</p>
                 </div>`;
 
-            const userQuery = `Effectues une recherche détaillée sur le web du site "${currentSite.site_nom}" situé à ${currentSite.comm_nom}, dont le propriétaire est "${currentSite.propio_nom || 'Inconnu'}". Utilise également les données de Cartofriches (${currentSite.url_cartofriche || 'URL non disponible'}). Fais tes recherches dans la presse régionale ou tout autre site contenant des mots-clés relatifs au site. Organise ta réponse de manière structurée avec : contexte historique, projets de reconversion identifiés et articles de presse trouvés.`;
+            const proprietaire = currentSite.propio_nom || currentSite.PROPIO_NOM || "Inconnu";
+            const prompt = `Effectues une recherche détaillée sur le web du site "${currentSite.site_nom}" à ${currentSite.comm_nom}. Propriétaire : ${proprietaire}. Utilise les sources régionales (presse, Cartofriches) pour identifier : 1. Son histoire 2. Les projets de reconversion 3. Les actualités récentes.`;
 
-            try {
-                // Utilisation de l'URL v1beta correcte
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-                
-                const payload = {
-                    contents: [{ parts: [{ text: userQuery }] }],
-                    tools: [{ "google_search": {} }]
-                };
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
 
-                const fetchWithRetry = async (retries = 5) => {
-                    for (let i = 0; i < retries; i++) {
-                        const response = await fetch(url, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
-                        });
-                        if (response.ok) return await response.json();
-                        // Délai exponentiel : 1s, 2s, 4s, 8s, 16s
-                        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)));
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                tools: [{ "google_search": {} }]
+            };
+
+            const callAPI = async (retryCount = 0) => {
+                try {
+                    const response = await fetch(url, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        if (retryCount < 5) {
+                            const delay = Math.pow(2, retryCount) * 1000;
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                            return callAPI(retryCount + 1);
+                        }
+                        throw new Error(`HTTP Error: ${response.status}`);
                     }
-                    throw new Error("Impossible de contacter le moteur de recherche IA");
-                };
 
-                const data = await fetchWithRetry();
-                const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-                const sources = data.candidates?.[0]?.groundingMetadata?.groundingAttributions || [];
+                    const data = await response.json();
+                    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                    const sources = data.candidates?.[0]?.groundingMetadata?.groundingAttributions || [];
 
-                if (!text) {
-                    respBox.innerHTML = "<p class='text-center py-10 text-gray-400 italic'>Aucun résultat probant trouvé sur le web pour ce site.</p>";
-                    return;
-                }
+                    if (!text) {
+                        respBox.innerHTML = "Aucune information détaillée n'a pu être extraite pour ce site spécifique.";
+                        return;
+                    }
 
-                // Formatage Markdown simplifié vers HTML
-                let htmlOutput = `<div class="space-y-4 text-gray-700 leading-relaxed">
-                    ${text.split('\n').map(line => {
-                        if (line.startsWith('### ')) return `<h4 class="text-lg font-bold text-gray-900 mt-6">${line.replace('### ', '')}</h4>`;
-                        if (line.startsWith('## ')) return `<h3 class="text-xl font-bold text-indigo-700 mt-8 mb-4 border-b pb-2">${line.replace('## ', '')}</h3>`;
-                        if (line.startsWith('**')) return `<p class="mb-2 font-semibold text-gray-800">${line.replace(/\*\*/g, '')}</p>`;
-                        return line ? `<p class="mb-2">${line}</p>` : '';
-                    }).join('')}
-                </div>`;
+                    let formattedText = text
+                        .replace(/## (.*)/g, '<h3 class="text-lg font-bold text-indigo-700 mt-4 mb-2 border-b pb-1">$1</h3>')
+                        .replace(/### (.*)/g, '<h4 class="text-md font-bold text-gray-800 mt-3 mb-1">$1</h4>')
+                        .replace(/\*\*(.*?)\*\*/g, '<strong class="text-gray-900">$1</strong>')
+                        .replace(/\n/g, '<br>');
 
-                if (sources.length > 0) {
-                    htmlOutput += `<div class="mt-8 pt-6 border-t border-gray-100">
-                        <h4 class="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-4">Sources d'investigation</h4>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-                            ${sources.map(s => `
-                                <a href="${s.web?.uri}" target="_blank" class="flex items-center p-2 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-100 transition-all group">
-                                    <div class="bg-white p-1.5 rounded-md shadow-sm mr-3 group-hover:scale-110 transition-transform">
-                                        <svg class="w-3 h-3 text-indigo-600" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+                    let html = `<div class="prose max-w-none">${formattedText}</div>`;
+
+                    if (sources.length > 0) {
+                        html += `<div class="mt-6 pt-4 border-t border-gray-100">
+                                    <p class="text-[10px] font-bold text-gray-400 uppercase mb-3">Sources identifiées</p>
+                                    <div class="grid grid-cols-1 gap-2">
+                                        ${sources.map(s => `
+                                            <a href="${s.web?.uri}" target="_blank" class="text-[11px] flex items-center p-2 bg-gray-50 hover:bg-indigo-50 rounded border border-gray-100 transition-colors">
+                                                <span class="truncate font-medium text-indigo-600">${s.web?.title || s.web?.uri}</span>
+                                            </a>
+                                        `).join('')}
                                     </div>
-                                    <span class="text-[11px] text-gray-600 font-medium truncate">${s.web?.title || 'Consulter la source'}</span>
-                                </a>`).join('')}
-                        </div>
+                                </div>`;
+                    }
+                    respBox.innerHTML = html;
+
+                } catch (err) {
+                    console.error("Gemini Error:", err);
+                    respBox.innerHTML = `<div class="p-4 bg-red-50 text-red-700 rounded-lg text-xs">
+                        <strong>Erreur de connexion :</strong><br>
+                        Le service de recherche IA est temporairement indisponible ou votre navigateur bloque la requête.<br><br>
+                        Vérifiez votre connexion ou essayez un autre site.
                     </div>`;
                 }
+            };
 
-                respBox.innerHTML = htmlOutput;
-
-            } catch (error) {
-                respBox.innerHTML = `<div class="p-4 bg-red-50 text-red-600 rounded-lg text-sm font-medium">
-                    Une erreur est survenue lors de la connexion au moteur de recherche IA. 
-                    Veuillez réessayer dans quelques instants.
-                </div>`;
-            }
+            callAPI();
         }
 
         function closeSidebar() { document.getElementById('detail-sidebar').classList.remove('active'); }
