@@ -51,7 +51,7 @@
 
     <div id="loader" class="fixed inset-0 bg-white z-[3000] flex flex-col items-center justify-center">
         <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600"></div>
-        <p class="mt-4 text-sm font-medium text-gray-500">Chargement de la base...</p>
+        <p class="mt-4 text-sm font-medium text-gray-500">Chargement et nettoyage des données...</p>
     </div>
 
     <div class="floating-panel">
@@ -173,7 +173,18 @@
                 Papa.parse(csvText, {
                     header: true, delimiter: ';', skipEmptyLines: true,
                     complete: function(results) {
-                        allData = results.data.filter(d => d.geompoint && d.geompoint.includes('POINT'));
+                        // NORMALISATION CRITIQUE DES CLÉS
+                        // Parfois le CSV contient des caractères invisibles (BOM) ou des espaces dans les noms de colonnes.
+                        allData = results.data.map(row => {
+                            const cleanedRow = {};
+                            Object.keys(row).forEach(key => {
+                                // Nettoyage : suppression des espaces début/fin et caractères invisibles
+                                const cleanKey = key.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                                cleanedRow[cleanKey] = row[key];
+                            });
+                            return cleanedRow;
+                        }).filter(d => d.geompoint && d.geompoint.includes('POINT'));
+
                         if (allData.length > 0) {
                             setupMultiFilters();
                             updateView();
@@ -233,13 +244,13 @@
                         (selTypes.includes(d.site_type)) &&
                         (selStatuts.includes(d.site_statut)) &&
                         (selPLUs.includes(d.urba_zone_type)) &&
-                        (selISDIs.includes(String(d.Intérêt_ISDI)));
+                        (selISDIs.includes(String(d.interet_isdi))); // Note: clé normalisée en minuscule
             });
 
             filtered.forEach(d => {
                 const coords = parseWKT(d.geompoint);
                 if (coords) {
-                    const color = ISDI_COLORS[String(d.Intérêt_ISDI)] || '#6366f1';
+                    const color = ISDI_COLORS[String(d.interet_isdi)] || '#6366f1';
                     const marker = L.marker(coords, {
                         icon: L.divIcon({
                             className: '',
@@ -260,8 +271,8 @@
             const content = document.getElementById('sidebar-content');
             const isdiLabels = { '0': 'Non Traité', '1': 'Sans intérêt', '2': 'Modéré', '3': 'Fort' };
             
-            // On s'assure de récupérer le propriétaire en testant différentes écritures
-            const proprietaire = d.propio_nom || d.PROPIO_NOM || d['propio_nom '] || "Inconnu";
+            // On utilise la clé nettoyée et normalisée
+            const proprietaire = d.propio_nom || "Inconnu";
 
             content.innerHTML = `
                 <h2 class="text-xl font-extrabold text-gray-900 mb-1 leading-tight">${d.site_nom || 'Site Anonyme'}</h2>
@@ -298,14 +309,14 @@
                         </div>
                         <div class="flex justify-between border-b border-gray-50 pb-2">
                             <span class="text-gray-400">Intérêt ISDI :</span>
-                            <span class="font-bold" style="color: ${ISDI_COLORS[d.Intérêt_ISDI]}">${isdiLabels[d.Intérêt_ISDI]}</span>
+                            <span class="font-bold" style="color: ${ISDI_COLORS[d.interet_isdi]}">${isdiLabels[d.interet_isdi]}</span>
                         </div>
                     </div>
 
                     <div class="mt-4">
                         <label class="text-[10px] font-bold text-gray-400 uppercase block mb-2">Commentaires</label>
                         <div class="bg-amber-50/50 p-4 rounded-xl text-xs text-gray-600 leading-relaxed border border-amber-100 italic">
-                            ${d.Commentaires || 'Aucun commentaire enregistré.'}
+                            ${d.commentaires || 'Aucun commentaire enregistré.'}
                         </div>
                     </div>
                 </div>
@@ -323,7 +334,7 @@
                     <p class="text-indigo-600 font-medium animate-pulse">Consultation des sources régionales et investigation Web...</p>
                 </div>`;
 
-            const proprietaire = currentSite.propio_nom || currentSite.PROPIO_NOM || "Inconnu";
+            const proprietaire = currentSite.propio_nom || "Inconnu";
             const prompt = `Effectues une recherche détaillée sur le web du site "${currentSite.site_nom}" à ${currentSite.comm_nom}. Propriétaire : ${proprietaire}. Utilise les sources régionales (presse, Cartofriches) pour identifier : 1. Son histoire 2. Les projets de reconversion 3. Les actualités récentes.`;
 
             const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
