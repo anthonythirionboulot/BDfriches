@@ -3,126 +3,382 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Explorateur de Friches - Grand Est</title>
-    
-    <!-- Bibliothèques externes -->
+    <title>Explorateur friches Grand Est</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-
     <style>
-        body, html { height: 100%; margin: 0; font-family: 'Inter', sans-serif; }
-        #map { height: 100vh; width: 100%; }
+        body, html { height: 100%; margin: 0; font-family: 'Inter', sans-serif; overflow: hidden; background: #f3f4f6; }
+        #map { height: 100vh; width: 100%; z-index: 1; }
         
         .floating-panel {
-            position: absolute; top: 20px; left: 20px; z-index: 1000;
-            background: white; padding: 20px; border-radius: 12px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-            width: 300px;
+            position: absolute; top: 15px; left: 15px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(8px);
+            padding: 16px; border-radius: 12px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            width: 320px; max-height: 95vh; overflow-y: auto;
+            border: 1px solid rgba(0,0,0,0.05);
         }
-        
-        .legend-dot {
-            height: 12px; width: 12px; border-radius: 50%; display: inline-block; margin-right: 8px;
+        #detail-sidebar {
+            position: absolute; top: 0; right: 0; height: 100%; width: 420px;
+            background: white; z-index: 1001;
+            box-shadow: -5px 0 25px rgba(0,0,0,0.1);
+            transform: translateX(100%); transition: transform 0.3s ease;
+            display: flex; flex-direction: column;
         }
+        #detail-sidebar.active { transform: translateX(0); }
+        .filter-group {
+            max-height: 80px; overflow-y: auto;
+            border: 1px solid #e5e7eb; padding: 6px;
+            border-radius: 6px; background: #ffffff;
+            font-size: 0.75rem;
+        }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 10px; }
+        #ia-modal {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+            z-index: 2000; display: none; align-items: center; justify-content: center;
+            padding: 20px;
+        }
+        .leaflet-container { height: 100%; width: 100%; }
     </style>
 </head>
-<body class="bg-gray-100">
+<body>
+    <div id="loader" class="fixed inset-0 bg-white z-[3000] flex flex-col items-center justify-center">
+        <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600"></div>
+        <p class="mt-4 text-sm font-medium text-gray-500">Chargement de la base...</p>
+    </div>
 
     <div class="floating-panel">
-        <h1 class="text-xl font-bold text-gray-800 mb-2">Friches du Grand Est</h1>
-        <p class="text-sm text-gray-600 mb-4">Visualisation des sites répertoriés à partir de la base de données CSV.</p>
-        
-        <div id="stats" class="text-sm font-medium text-blue-600 bg-blue-50 p-3 rounded-lg border border-blue-100">
-            Chargement des données...
+        <div class="flex items-center justify-between mb-4">
+            <h1 class="text-lg font-extrabold text-gray-900 tracking-tight">Explorateur friches Grand Est</h1>
+            <span id="stats" class="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold">0 sites</span>
         </div>
+        
+        <div class="space-y-3">
+            <div>
+                <input type="text" id="search-input" placeholder="Rechercher un site..." 
+                    class="w-full p-2 border border-gray-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm">
+            </div>
+            <div class="grid grid-cols-1 gap-3">
+                <div>
+                    <label class="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Types de Friche</label>
+                    <div id="multi-type" class="filter-group space-y-0.5"></div>
+                </div>
+                <div>
+                    <label class="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Statuts</label>
+                    <div id="multi-statut" class="filter-group space-y-0.5"></div>
+                </div>
+                <div>
+                    <label class="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Zonage PLU</label>
+                    <div id="multi-plu" class="filter-group space-y-0.5"></div>
+                </div>
+                <div>
+                    <label class="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Intérêt ISDI</label>
+                    <div id="multi-isdi" class="filter-group space-y-0.5">
+                        <label class="flex items-center space-x-2"><input type="checkbox" value="0" checked> <span>Non Traité</span></label>
+                        <label class="flex items-center space-x-2"><input type="checkbox" value="1" checked> <span>Sans intérêt</span></label>
+                        <label class="flex items-center space-x-2"><input type="checkbox" value="2" checked> <span>Modéré</span></label>
+                        <label class="flex items-center space-x-2"><input type="checkbox" value="3" checked> <span>Fort</span></label>
+                    </div>
+                </div>
+            </div>
+            <button onclick="resetFilters()" class="w-full py-2 text-[11px] bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-lg border border-gray-200 font-bold transition-all mt-2">
+                Réinitialiser
+            </button>
+        </div>
+    </div>
 
-        <div class="mt-4 pt-4 border-t border-gray-100">
-            <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Légende</h2>
-            <div class="flex items-center text-sm text-gray-700 mb-1">
-                <span class="legend-dot bg-blue-500"></span> Site identifié
+    <div id="detail-sidebar">
+        <div class="p-6 overflow-y-auto flex-1">
+            <div class="flex justify-between items-start mb-4">
+                <button onclick="closeSidebar()" class="text-gray-400 hover:text-gray-600 transition-colors">✕</button>
+                <button onclick="generateIAInfo()" class="bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center hover:bg-indigo-100 transition-all">
+                    ✨ Information (IA)
+                </button>
+            </div>
+            <div id="sidebar-content"></div>
+        </div>
+    </div>
+
+    <div id="ia-modal">
+        <div class="bg-white rounded-2xl max-w-2xl w-full p-8 shadow-2xl relative">
+            <button onclick="closeIAModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600">✕</button>
+            <h3 class="text-xl font-bold text-gray-900 mb-4 flex items-center">
+                <span class="mr-2">✨</span> Rapport d'Investigation (IA)
+            </h3>
+            <div id="ia-response" class="prose prose-indigo max-h-[60vh] overflow-y-auto text-gray-600 text-sm leading-relaxed">
+                Recherche en cours...
+            </div>
+            <div class="mt-6 pt-4 border-t text-[10px] text-gray-400 flex justify-between items-center">
+                <span>Sources Web via Google Search (Gemini 2.5 Flash)</span>
+                <button onclick="closeIAModal()" class="bg-gray-900 text-white px-4 py-2 rounded-lg font-bold">Fermer</button>
             </div>
         </div>
     </div>
 
     <div id="map"></div>
 
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script>
-        // 1. Initialisation de la carte
-        const map = L.map('map').setView([48.6, 7.5], 9); // Centré par défaut sur l'Alsace/Grand Est
+        const apiKey = ""; 
+        let map, markerLayer, allData = [];
+        let currentSite = null;
+        const CSV_FILE = 'BD_GEMINI_TEST_CSV.csv';
+        const ISDI_COLORS = { '0': '#64748b', '1': '#ef4444', '2': '#f97316', '3': '#22c55e' };
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors'
-        }).addTo(map);
+        function initMap() {
+            const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap'
+            });
 
-        // 2. Fonction pour extraire les coordonnées du format "POINT (X Y)"
-        function parseWKT(wktString) {
-            if (!wktString) return null;
-            // Utilise une expression régulière pour capturer les nombres à l'intérieur des parenthèses
-            const match = wktString.match(/\(([^)]+)\)/);
-            if (match) {
-                const parts = match[1].trim().split(/\s+/);
-                if (parts.length >= 2) {
-                    const lng = parseFloat(parts[0]);
-                    const lat = parseFloat(parts[1]);
-                    return { lat, lng };
-                }
-            }
-            return null;
+            const googleSat = L.tileLayer('http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                subdomains:['mt0','mt1','mt2','mt3'],
+                attribution: '&copy; Google Maps Satellite'
+            });
+
+            map = L.map('map', { 
+                zoomControl: true,
+                layers: [osm]
+            }).setView([48.6, 7.5], 9);
+
+            const baseMaps = {
+                "Plan (OSM)": osm,
+                "Satellite (Google)": googleSat
+            };
+
+            L.control.layers(baseMaps).addTo(map);
+            markerLayer = L.layerGroup().addTo(map);
+            
+            loadData();
         }
 
-        // 3. Chargement et traitement du CSV
-        const csvFile = "BD_GEMINI_TEST_CSV.csv";
-
-        Papa.parse(csvFile, {
-            download: true,
-            header: true,
-            delimiter: ";", // Spécifié car votre fichier utilise le point-virgule
-            skipEmptyLines: true,
-            complete: function(results) {
-                const data = results.data;
-                let count = 0;
-                const markers = [];
-
-                data.forEach((row, index) => {
-                    // Extraction des coordonnées depuis la colonne 'geompoint'
-                    const coords = parseWKT(row.geompoint);
-
-                    if (coords && !isNaN(coords.lat) && !isNaN(coords.lng)) {
-                        // Création du marqueur
-                        // Note : Leaflet prend [lat, lng]
-                        const marker = L.marker([coords.lat, coords.lng])
-                            .bindPopup(`
-                                <div class="font-sans">
-                                    <h3 class="font-bold text-lg text-blue-700">${row.site_nom || 'Sans nom'}</h3>
-                                    <p class="text-sm"><b>Type :</b> ${row.site_type || 'Non spécifié'}</p>
-                                    <p class="text-sm"><b>Adresse :</b> ${row.site_adresse || 'N/A'}</p>
-                                    <p class="text-xs mt-2 text-gray-500 italic">ID: ${row.site_id}</p>
-                                </div>
-                            `);
+        async function loadData() {
+            try {
+                const response = await fetch(CSV_FILE);
+                const csvText = await response.text();
+                
+                Papa.parse(csvText, {
+                    header: true,
+                    delimiter: ';',
+                    skipEmptyLines: true,
+                    complete: function(results) {
+                        // Nettoyage et filtrage : on ne garde que les lignes avec une géométrie valide
+                        allData = results.data.filter(d => d.geompoint && d.geompoint.includes('POINT'));
                         
-                        marker.addTo(map);
-                        markers.push(marker);
-                        count++;
-                    } else {
-                        console.warn(`Ligne ${index + 1} ignorée : coordonnées invalides`, row.geompoint);
+                        if (allData.length > 0) {
+                            setupMultiFilters();
+                            updateView();
+                            // Zoom sur le premier site trouvé
+                            const firstCoords = parseWKT(allData[0].geompoint);
+                            if (firstCoords) map.setView(firstCoords, 11);
+                        }
+                        
+                        document.getElementById('loader').style.display = 'none';
+                        setTimeout(() => map.invalidateSize(), 500);
                     }
                 });
+            } catch (error) {
+                console.error(error);
+                document.getElementById('loader').innerHTML = "Erreur de lecture du fichier CSV.";
+            }
+        }
 
-                // Ajuster la vue si des marqueurs ont été ajoutés
-                if (markers.length > 0) {
-                    const group = new L.featureGroup(markers);
-                    map.fitBounds(group.getBounds().pad(0.1));
+        function setupMultiFilters() {
+            const createCheckboxes = (containerId, field) => {
+                const container = document.getElementById(containerId);
+                const values = [...new Set(allData.map(d => d[field]))].filter(v => v).sort();
+                
+                container.innerHTML = values.map(v => `
+                    <label class="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded">
+                        <input type="checkbox" value="${v}" checked class="rounded w-3 h-3 text-indigo-600">
+                        <span class="truncate">${v}</span>
+                    </label>
+                `).join('');
+                
+                container.querySelectorAll('input').forEach(i => i.addEventListener('change', updateView));
+            };
+
+            createCheckboxes('multi-type', 'site_type');
+            createCheckboxes('multi-statut', 'site_statut');
+            createCheckboxes('multi-plu', 'urba_zone_type');
+            
+            document.getElementById('search-input').addEventListener('input', updateView);
+            document.querySelectorAll('#multi-isdi input').forEach(i => i.addEventListener('change', updateView));
+        }
+
+        function parseWKT(wkt) {
+            if (!wkt) return null;
+            const match = wkt.match(/POINT\s*\(\s*([\d.-]+)\s+([\d.-]+)\s*\)/);
+            // CSV WKT est souvent (Longitude Latitude), Leaflet veut [Lat, Lng]
+            return match ? [parseFloat(match[2]), parseFloat(match[1])] : null;
+        }
+
+        function formatSurface(val) {
+            if (!val) return "N/A";
+            let num = parseFloat(String(val).replace(',', '.'));
+            return isNaN(num) ? "N/A" : Math.round(num).toLocaleString('fr-FR') + " m²";
+        }
+
+        function updateView() {
+            markerLayer.clearLayers();
+            const search = document.getElementById('search-input').value.toLowerCase();
+            const selTypes = Array.from(document.querySelectorAll('#multi-type input:checked')).map(i => i.value);
+            const selStatuts = Array.from(document.querySelectorAll('#multi-statut input:checked')).map(i => i.value);
+            const selPLUs = Array.from(document.querySelectorAll('#multi-plu input:checked')).map(i => i.value);
+            const selISDIs = Array.from(document.querySelectorAll('#multi-isdi input:checked')).map(i => i.value);
+
+            const filtered = allData.filter(d => {
+                const matchesSearch = !search || (d.site_nom && d.site_nom.toLowerCase().includes(search));
+                const matchesType = selTypes.includes(d.site_type);
+                const matchesStatut = selStatuts.includes(d.site_statut);
+                const matchesPLU = selPLUs.includes(d.urba_zone_type);
+                const matchesISDI = selISDIs.includes(String(d.Intérêt_ISDI));
+                
+                return matchesSearch && matchesType && matchesStatut && matchesPLU && matchesISDI;
+            });
+
+            filtered.forEach(d => {
+                const coords = parseWKT(d.geompoint);
+                if (coords) {
+                    const color = ISDI_COLORS[String(d.Intérêt_ISDI)] || '#6366f1';
+                    const marker = L.marker(coords, {
+                        icon: L.divIcon({
+                            className: '',
+                            html: `<svg width="32" height="32" viewBox="0 0 24 24" fill="${color}" stroke="white" stroke-width="1.5"><path d="M12 21.7C17.3 17 20 13 20 9a8 8 0 1 0-16 0c0 4 2.7 8 8 12.7z"/><circle cx="12" cy="9" r="2.5" fill="white"/></svg>`,
+                            iconSize: [32, 32], iconAnchor: [16, 32]
+                        })
+                    });
+                    marker.on('click', () => openSidebar(d));
+                    markerLayer.addLayer(marker);
+                }
+            });
+
+            document.getElementById('stats').innerText = `${filtered.length} sites`;
+        }
+
+        function openSidebar(d) {
+            currentSite = d;
+            const sidebar = document.getElementById('detail-sidebar');
+            const content = document.getElementById('sidebar-content');
+            const isdiLabels = { '0': 'Non Traité', '1': 'Sans intérêt', '2': 'Modéré', '3': 'Fort' };
+            
+            content.innerHTML = `
+                <h2 class="text-xl font-extrabold text-gray-900 mb-1 leading-tight">${d.site_nom || 'Site Sans Nom'}</h2>
+                <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-4">ID: ${d.site_id}</p>
+
+                ${d.url_cartofriche ? `
+                <a href="${d.url_cartofriche}" target="_blank" class="w-full mb-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold flex items-center justify-center transition-all shadow-md">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
+                    Consulter Cartofriches
+                </a>` : ''}
+
+                <div class="grid grid-cols-1 gap-4">
+                    <div class="bg-gray-50 border border-gray-100 p-4 rounded-xl">
+                        <label class="text-[10px] font-bold text-gray-400 uppercase block mb-1">Surface estimée</label>
+                        <p class="text-lg font-black text-indigo-600">${formatSurface(d.site_surface)}</p>
+                    </div>
+
+                    <div class="space-y-3 text-sm">
+                        <div class="flex justify-between border-b border-gray-50 pb-2">
+                            <span class="text-gray-400">Commune :</span>
+                            <span class="font-semibold text-gray-700">${d.comm_nom || 'N/A'}</span>
+                        </div>
+                        <div class="flex justify-between border-b border-gray-50 pb-2">
+                            <span class="text-gray-400">Propriétaire :</span>
+                            <span class="font-semibold text-gray-700">${d.propio_nom || 'Inconnu'}</span>
+                        </div>
+                        <div class="flex justify-between border-b border-gray-50 pb-2">
+                            <span class="text-gray-400">Usage :</span>
+                            <span class="font-semibold text-gray-700">${d.site_type}</span>
+                        </div>
+                        <div class="flex justify-between border-b border-gray-50 pb-2">
+                            <span class="text-gray-400">Statut :</span>
+                            <span class="font-semibold text-gray-700">${d.site_statut}</span>
+                        </div>
+                        <div class="flex justify-between border-b border-gray-50 pb-2">
+                            <span class="text-gray-400">Intérêt ISDI :</span>
+                            <span class="font-bold" style="color: ${ISDI_COLORS[d.Intérêt_ISDI]}">${isdiLabels[d.Intérêt_ISDI]}</span>
+                        </div>
+                    </div>
+
+                    <div class="mt-4">
+                        <label class="text-[10px] font-bold text-gray-400 uppercase block mb-2">Notes & Commentaires</label>
+                        <div class="bg-amber-50/50 p-4 rounded-xl text-xs text-gray-600 leading-relaxed border border-amber-100 italic">
+                            ${d.Commentaires || 'Aucun commentaire disponible pour ce site.'}
+                        </div>
+                    </div>
+                </div>
+            `;
+            sidebar.classList.add('active');
+        }
+
+        async function generateIAInfo() {
+            if (!currentSite) return;
+            document.getElementById('ia-modal').style.display = 'flex';
+            const respBox = document.getElementById('ia-response');
+            respBox.innerHTML = `<div class="flex flex-col items-center justify-center py-10"><div class="animate-spin h-8 w-8 border-b-2 border-indigo-600 rounded-full mb-4"></div><p class="text-indigo-600 font-medium animate-pulse">Investigation web en cours...</p></div>`;
+
+            const userQuery = `Recherche détaillée sur le site friche "${currentSite.site_nom}" à "${currentSite.comm_nom}". Propriétaire: "${currentSite.propio_nom}". Coordonnées: "${currentSite.geompoint}". Organise ta réponse : contexte historique, projets de reconversion et presse locale.`;
+
+            try {
+                const fetchWithRetry = async (url, options, retries = 3) => {
+                    for (let i = 0; i < retries; i++) {
+                        const res = await fetch(url, options);
+                        if (res.ok) return res;
+                        await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+                    }
+                    throw new Error("API non disponible");
+                };
+
+                const response = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: userQuery }] }],
+                        tools: [{ "google_search": {} }]
+                    })
+                });
+
+                const result = await response.json();
+                const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                const sources = result.candidates?.[0]?.groundingMetadata?.groundingAttributions;
+
+                let finalHtml = `<div class="space-y-4 text-gray-700">`;
+                if (text) {
+                    finalHtml += text.split('\n').map(line => {
+                        if (line.startsWith('###')) return `<h4 class="text-lg font-bold text-gray-900 mt-4">${line.replace(/###/g, '')}</h4>`;
+                        if (line.startsWith('##')) return `<h3 class="text-xl font-bold text-indigo-700 mt-6 mb-3 border-b pb-1">${line.replace(/##/g, '')}</h3>`;
+                        return line ? `<p class="mb-2">${line.replace(/\*\*/g, '<b>').replace(/\*\*/g, '</b>')}</p>` : '';
+                    }).join('');
+                }
+                finalHtml += `</div>`;
+
+                if (sources && sources.length > 0) {
+                    finalHtml += `<div class="mt-6 pt-4 border-t border-gray-100"><h4 class="text-[10px] font-bold text-indigo-400 uppercase mb-3">Sources trouvées</h4><div class="grid grid-cols-1 gap-2">`;
+                    sources.forEach(s => {
+                        finalHtml += `<a href="${s.web?.uri}" target="_blank" class="text-xs p-2 bg-gray-50 rounded border border-gray-100 hover:bg-gray-100 block truncate text-indigo-600 font-medium underline">${s.web?.title || s.web?.uri}</a>`;
+                    });
+                    finalHtml += `</div></div>`;
                 }
 
-                // Mise à jour de l'interface
-                document.getElementById('stats').innerText = `${count} sites affichés avec succès`;
-            },
-            error: function(err) {
-                console.error("Erreur lors du chargement du CSV:", err);
-                document.getElementById('stats').innerHTML = `<span class="text-red-500">Erreur de chargement du fichier CSV</span>`;
+                respBox.innerHTML = finalHtml || "Aucune information supplémentaire trouvée.";
+            } catch (err) {
+                respBox.innerHTML = `<p class="text-red-500">Erreur lors de la génération des informations.</p>`;
             }
-        });
+        }
+
+        function closeSidebar() { document.getElementById('detail-sidebar').classList.remove('active'); }
+        function closeIAModal() { document.getElementById('ia-modal').style.display = 'none'; }
+        function resetFilters() {
+            document.getElementById('search-input').value = '';
+            document.querySelectorAll('.filter-group input').forEach(i => i.checked = true);
+            updateView();
+            closeSidebar();
+        }
+
+        window.onload = initMap;
     </script>
 </body>
 </html>
