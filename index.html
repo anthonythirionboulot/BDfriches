@@ -93,7 +93,7 @@
             <div class="flex justify-between items-start mb-4">
                 <button onclick="closeSidebar()" class="text-gray-400 hover:text-gray-600 transition-colors text-xl">✕</button>
                 <button onclick="generateIAInfo()" class="bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center hover:bg-indigo-100 transition-all">
-                    ✨ Inion (IA)
+                    ✨ Information (IA)
                 </button>
             </div>
             <div id="sidebar-content"></div>
@@ -214,7 +214,7 @@
             return match ? [parseFloat(match[2]), parseFloat(match[1])] : null;
         }
 
-        function Surface(val) {
+        function formatSurface(val) {
             return val ? val : "N/A";
         }
 
@@ -276,7 +276,7 @@
 
                 <div class="grid grid-cols-1 gap-4">
                     <div class="bg-gray-50 border border-gray-100 p-4 rounded-xl">
-                        <label class="text-[10px] font-bold text-gray-400 uppercase block mb-1">Surface </label>
+                        <label class="text-[10px] font-bold text-gray-400 uppercase block mb-1">Surface (format foncier)</label>
                         <p class="text-lg font-black text-indigo-600">${formatSurface(d.site_surface)}</p>
                     </div>
 
@@ -409,4 +409,3 @@
     </script>
 </body>
 </html>
-
