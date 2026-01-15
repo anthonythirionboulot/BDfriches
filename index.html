@@ -121,8 +121,10 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script>
-        // La clé API sera injectée par l'environnement
+        // La clé API est gérée automatiquement par l'environnement Canvas.
+        // Ne pas modifier cette ligne.
         const apiKey = ""; 
+        
         let map, markerLayer, allData = [];
         let currentSite = null;
         const CSV_FILE = 'BD_GEMINI_TEST_CSV.csv';
@@ -213,7 +215,6 @@
             return match ? [parseFloat(match[2]), parseFloat(match[1])] : null;
         }
 
-        // Correction : Retourne directement la valeur de la colonne site_surface sans transformation
         function formatSurface(val) {
             return val ? val : "N/A";
         }
@@ -314,7 +315,6 @@
             sidebar.classList.add('active');
         }
 
-        // Correction IA : Utilisation du modèle supporté et gestion robuste
         async function fetchWithRetry(url, options, retries = 5, delay = 1000) {
             for (let i = 0; i < retries; i++) {
                 try {
@@ -322,9 +322,8 @@
                     const data = await response.json();
                     if (response.ok) return data;
                     
-                    // Si erreur quota ou serveur
                     if (response.status !== 429 && response.status < 500) {
-                        throw new Error(data.error?.message || "Erreur API");
+                        throw new Error(data.error?.message || `Erreur API ${response.status}`);
                     }
                 } catch (e) {
                     if (i === retries - 1) throw e;
@@ -340,15 +339,22 @@
             const respBox = document.getElementById('ia-response');
             respBox.innerHTML = `<div class="flex flex-col items-center justify-center py-10"><div class="animate-spin h-8 w-8 border-b-2 border-indigo-600 rounded-full mb-4"></div><p class="text-indigo-600 font-medium animate-pulse">Investigation web en cours...</p></div>`;
 
-            const userQuery = `Recherche web approfondie sur la friche "${currentSite.site_nom}" à "${currentSite.comm_nom}". Détaille l'histoire industrielle, les projets de réhabilitation et cite les articles de presse récents. Propriétaire : "${currentSite.proprio_nom}".`;
+            const prompt = `Recherche web approfondie sur la friche "${currentSite.site_nom}" située à "${currentSite.comm_nom}". 
+            Points clés attendus : 
+            1. Histoire industrielle et usage passé.
+            2. Projets de réhabilitation ou de reconversion mentionnés publiquement.
+            3. Articles de presse récents ou décisions administratives liées.
+            Propriétaire connu : "${currentSite.proprio_nom}".`;
 
             try {
-                // Utilisation de gemini-2.5-flash-preview-09-2025 (modèle standard pour l'environnement Canvas)
-                const result = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                // L'URL utilise gemini-2.5-flash-preview-09-2025 avec la clé API injectée dynamiquement
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+                
+                const result = await fetchWithRetry(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        contents: [{ parts: [{ text: userQuery }] }],
+                        contents: [{ parts: [{ text: prompt }] }],
                         tools: [{ "google_search": {} }]
                     })
                 });
@@ -367,21 +373,27 @@
                 finalHtml += `</div>`;
 
                 if (sources && sources.length > 0) {
-                    finalHtml += `<div class="mt-6 pt-4 border-t border-gray-100"><h4 class="text-[10px] font-bold text-indigo-400 uppercase mb-3">Sources identifiées</h4><div class="grid grid-cols-1 gap-2">`;
+                    finalHtml += `<div class="mt-6 pt-4 border-t border-gray-100">
+                        <h4 class="text-[10px] font-bold text-indigo-400 uppercase mb-3">Sources consultées</h4>
+                        <div class="grid grid-cols-1 gap-2">`;
                     sources.forEach(s => {
                         const title = s.web?.title || s.web?.uri || "Lien source";
                         const uri = s.web?.uri || "#";
-                        finalHtml += `<a href="${uri}" target="_blank" class="text-xs p-2 bg-gray-50 rounded border border-gray-100 hover:bg-gray-100 block truncate text-indigo-600 font-medium underline">${title}</a>`;
+                        finalHtml += `<a href="${uri}" target="_blank" class="text-xs p-2 bg-gray-50 rounded border border-gray-100 hover:bg-gray-100 block truncate text-indigo-600 font-medium underline italic">${title}</a>`;
                     });
                     finalHtml += `</div></div>`;
                 }
 
-                respBox.innerHTML = finalHtml || "Aucune information supplémentaire n'a pu être extraite.";
+                respBox.innerHTML = finalHtml || "Aucune donnée n'a été retournée par l'IA.";
             } catch (err) {
-                respBox.innerHTML = `<div class="p-4 bg-red-50 border border-red-100 rounded-lg text-red-600 text-sm">
-                    <strong>Erreur de communication :</strong> ${err.message}<br>
-                    Note : Assurez-vous que l'API est accessible et que le modèle gemini-2.5-flash-preview-09-2025 est disponible.
-                </div>`;
+                respBox.innerHTML = `
+                    <div class="p-4 bg-red-50 border border-red-100 rounded-lg text-red-600 text-sm">
+                        <p class="font-bold mb-2">L'IA n'a pas pu répondre :</p>
+                        <p class="italic mb-2">${err.message}</p>
+                        <hr class="my-2 border-red-200">
+                        <p class="text-[10px] uppercase font-bold text-red-400">Note Technique :</p>
+                        <p class="text-[10px]">La plateforme Canvas injecte la clé API à l'exécution. Si cette erreur persiste après rafraîchissement, cela peut être dû à une limite de quota ou à une maintenance temporaire des services Google AI.</p>
+                    </div>`;
             }
         }
 
