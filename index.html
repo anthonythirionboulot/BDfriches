@@ -121,6 +121,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script>
+        // La clé API sera injectée par l'environnement
         const apiKey = ""; 
         let map, markerLayer, allData = [];
         let currentSite = null;
@@ -212,17 +213,9 @@
             return match ? [parseFloat(match[2]), parseFloat(match[1])] : null;
         }
 
-        // Correction : Formatage de la surface en Ha Ares Ca
+        // Correction : Retourne directement la valeur de la colonne site_surface sans transformation
         function formatSurface(val) {
-            if (!val) return "N/A";
-            let totalM2 = parseFloat(String(val).replace(',', '.'));
-            if (isNaN(totalM2)) return "N/A";
-
-            const ha = Math.floor(totalM2 / 10000);
-            const a = Math.floor((totalM2 % 10000) / 100);
-            const ca = Math.round(totalM2 % 100);
-
-            return `${ha} ha ${String(a).padStart(2, '0')} a ${String(ca).padStart(2, '0')} ca`;
+            return val ? val : "N/A";
         }
 
         function updateView() {
@@ -234,7 +227,6 @@
             const selISDIs = Array.from(document.querySelectorAll('#multi-isdi input:checked')).map(i => i.value);
 
             const filtered = allData.filter(d => {
-                // Correction : Ajout de la recherche dans les commentaires (pour les #mots-clés)
                 const matchesSearch = !search || 
                     (d.site_nom && d.site_nom.toLowerCase().includes(search)) ||
                     (d.Commentaires && d.Commentaires.toLowerCase().includes(search));
@@ -284,7 +276,7 @@
 
                 <div class="grid grid-cols-1 gap-4">
                     <div class="bg-gray-50 border border-gray-100 p-4 rounded-xl">
-                        <label class="text-[10px] font-bold text-gray-400 uppercase block mb-1">Surface exacte</label>
+                        <label class="text-[10px] font-bold text-gray-400 uppercase block mb-1">Surface (format foncier)</label>
                         <p class="text-lg font-black text-indigo-600">${formatSurface(d.site_surface)}</p>
                     </div>
 
@@ -322,18 +314,24 @@
             sidebar.classList.add('active');
         }
 
-        // Correction : Gestion de l'IA avec retry et modèle supporté
+        // Correction IA : Utilisation du modèle supporté et gestion robuste
         async function fetchWithRetry(url, options, retries = 5, delay = 1000) {
             for (let i = 0; i < retries; i++) {
                 try {
                     const response = await fetch(url, options);
-                    if (response.ok) return await response.json();
-                    if (response.status !== 429 && response.status < 500) break;
-                } catch (e) {}
+                    const data = await response.json();
+                    if (response.ok) return data;
+                    
+                    // Si erreur quota ou serveur
+                    if (response.status !== 429 && response.status < 500) {
+                        throw new Error(data.error?.message || "Erreur API");
+                    }
+                } catch (e) {
+                    if (i === retries - 1) throw e;
+                }
                 await new Promise(res => setTimeout(res, delay));
                 delay *= 2;
             }
-            throw new Error("Impossible de joindre l'API après plusieurs tentatives.");
         }
 
         async function generateIAInfo() {
@@ -342,10 +340,10 @@
             const respBox = document.getElementById('ia-response');
             respBox.innerHTML = `<div class="flex flex-col items-center justify-center py-10"><div class="animate-spin h-8 w-8 border-b-2 border-indigo-600 rounded-full mb-4"></div><p class="text-indigo-600 font-medium animate-pulse">Investigation web en cours...</p></div>`;
 
-            const userQuery = `Fais une recherche web sur la friche "${currentSite.site_nom}" située à "${currentSite.comm_nom}". Détaille l'historique industriel, les éventuels projets de reconversion mentionnés dans la presse locale et les enjeux environnementaux. Propriétaire cité : "${currentSite.proprio_nom}".`;
+            const userQuery = `Recherche web approfondie sur la friche "${currentSite.site_nom}" à "${currentSite.comm_nom}". Détaille l'histoire industrielle, les projets de réhabilitation et cite les articles de presse récents. Propriétaire : "${currentSite.proprio_nom}".`;
 
             try {
-                // Utilisation du modèle supporté : gemini-2.5-flash-preview-09-2025
+                // Utilisation de gemini-2.5-flash-preview-09-2025 (modèle standard pour l'environnement Canvas)
                 const result = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -369,17 +367,20 @@
                 finalHtml += `</div>`;
 
                 if (sources && sources.length > 0) {
-                    finalHtml += `<div class="mt-6 pt-4 border-t border-gray-100"><h4 class="text-[10px] font-bold text-indigo-400 uppercase mb-3">Sources vérifiées</h4><div class="grid grid-cols-1 gap-2">`;
+                    finalHtml += `<div class="mt-6 pt-4 border-t border-gray-100"><h4 class="text-[10px] font-bold text-indigo-400 uppercase mb-3">Sources identifiées</h4><div class="grid grid-cols-1 gap-2">`;
                     sources.forEach(s => {
-                        finalHtml += `<a href="${s.web?.uri}" target="_blank" class="text-xs p-2 bg-gray-50 rounded border border-gray-100 hover:bg-gray-100 block truncate text-indigo-600 font-medium underline">${s.web?.title || s.web?.uri}</a>`;
+                        const title = s.web?.title || s.web?.uri || "Lien source";
+                        const uri = s.web?.uri || "#";
+                        finalHtml += `<a href="${uri}" target="_blank" class="text-xs p-2 bg-gray-50 rounded border border-gray-100 hover:bg-gray-100 block truncate text-indigo-600 font-medium underline">${title}</a>`;
                     });
                     finalHtml += `</div></div>`;
                 }
 
-                respBox.innerHTML = finalHtml || "Aucune information supplémentaire trouvée.";
+                respBox.innerHTML = finalHtml || "Aucune information supplémentaire n'a pu être extraite.";
             } catch (err) {
                 respBox.innerHTML = `<div class="p-4 bg-red-50 border border-red-100 rounded-lg text-red-600 text-sm">
-                    <strong>Erreur de génération :</strong> ${err.message}<br>Veuillez réessayer dans quelques instants.
+                    <strong>Erreur de communication :</strong> ${err.message}<br>
+                    Note : Assurez-vous que l'API est accessible et que le modèle gemini-2.5-flash-preview-09-2025 est disponible.
                 </div>`;
             }
         }
