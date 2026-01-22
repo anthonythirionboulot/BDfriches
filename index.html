@@ -40,12 +40,26 @@
             padding: 20px;
         }
         .leaflet-container { height: 100%; width: 100%; }
+        
+        /* Style pour le prompt de clé API */
+        #api-key-prompt {
+            position: fixed; top: 20px; right: 20px; z-index: 3000;
+            background: white; padding: 10px; border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: none;
+            border: 1px solid #e5e7eb;
+        }
     </style>
 </head>
 <body>
     <div id="loader" class="fixed inset-0 bg-white z-[3000] flex flex-col items-center justify-center">
         <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600"></div>
         <p class="mt-4 text-sm font-medium text-gray-500">Chargement de la base...</p>
+    </div>
+
+    <!-- Interface de saisie de clé API (Si manquante) -->
+    <div id="api-key-prompt" class="flex items-center space-x-2">
+        <input type="password" id="api-key-input" placeholder="Collez votre clé Gemini API..." class="text-xs p-2 border rounded border-gray-300 outline-none w-48">
+        <button onclick="saveApiKey()" class="bg-indigo-600 text-white text-[10px] px-3 py-2 rounded font-bold uppercase">OK</button>
     </div>
 
     <div class="floating-panel">
@@ -121,8 +135,31 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script>
-        // Clé API fournie par l'utilisateur
-        const apiKey = "AIzaSyCG8kzsfvzd3RkSyrAPt6CuVzlpVXnpaEA"; 
+        /**
+         * GESTION SÉCURISÉE DE LA CLÉ API
+         * La clé n'est plus stockée dans le code. 
+         * Elle est demandée au besoin et stockée uniquement dans la session du navigateur.
+         */
+        let apiKey = sessionStorage.getItem('GEMINI_API_KEY') || "";
+
+        function checkApiKey() {
+            if (!apiKey) {
+                document.getElementById('api-key-prompt').style.display = 'flex';
+                return false;
+            }
+            return true;
+        }
+
+        function saveApiKey() {
+            const input = document.getElementById('api-key-input').value.trim();
+            if (input) {
+                apiKey = input;
+                sessionStorage.setItem('GEMINI_API_KEY', apiKey);
+                document.getElementById('api-key-prompt').style.display = 'none';
+                // Si on a cliqué sur le bouton alors qu'un site était ouvert, on relance l'IA
+                if (currentSite) generateIAInfo();
+            }
+        }
         
         let map, markerLayer, allData = [];
         let currentSite = null;
@@ -334,6 +371,10 @@
 
         async function generateIAInfo() {
             if (!currentSite) return;
+            
+            // Sécurité : on vérifie la clé avant de lancer l'appel
+            if (!checkApiKey()) return;
+
             document.getElementById('ia-modal').style.display = 'flex';
             const respBox = document.getElementById('ia-response');
             respBox.innerHTML = `<div class="flex flex-col items-center justify-center py-10"><div class="animate-spin h-8 w-8 border-b-2 border-indigo-600 rounded-full mb-4"></div><p class="text-indigo-600 font-medium animate-pulse">Investigation web en cours...</p></div>`;
@@ -346,7 +387,6 @@
             Propriétaire connu : "${currentSite.proprio_nom}".`;
 
             try {
-                // Utilisation du modèle gemini-2.5-flash-preview-09-2025 avec la clé fournie
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
                 
                 const result = await fetchWithRetry(url, {
@@ -385,13 +425,19 @@
 
                 respBox.innerHTML = finalHtml || "Aucune donnée n'a été retournée par l'IA.";
             } catch (err) {
+                // Si l'erreur est liée à la clé (401/403), on réaffiche le prompt
+                if (err.message.includes('401') || err.message.includes('403') || err.message.includes('key')) {
+                    sessionStorage.removeItem('GEMINI_API_KEY');
+                    apiKey = "";
+                    checkApiKey();
+                }
                 respBox.innerHTML = `
                     <div class="p-4 bg-red-50 border border-red-100 rounded-lg text-red-600 text-sm">
                         <p class="font-bold mb-2">L'IA n'a pas pu répondre :</p>
                         <p class="italic mb-2">${err.message}</p>
                         <hr class="my-2 border-red-200">
                         <p class="text-[10px] uppercase font-bold text-red-400">Dépannage :</p>
-                        <p class="text-[10px]">Vérifiez que la clé API est active et que le modèle 'gemini-2.5-flash-preview-09-2025' est accessible pour votre projet Google Cloud.</p>
+                        <p class="text-[10px]">Vérifiez votre clé API en haut à droite. Le modèle 'gemini-2.5-flash-preview-09-2025' doit être activé.</p>
                     </div>`;
             }
         }
@@ -409,4 +455,3 @@
     </script>
 </body>
 </html>
-
